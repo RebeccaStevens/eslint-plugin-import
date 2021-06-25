@@ -22,6 +22,7 @@ let parseConfigFileTextToJson;
 const log = debug('eslint-plugin-import:ExportMap');
 
 const exportCache = new Map();
+const tsConfigCache = new Map();
 
 export default class ExportMap {
   constructor(path) {
@@ -438,9 +439,11 @@ ExportMap.parse = function (path, content, context) {
 
   const source = makeSourceCode(content, ast);
 
-  function isEsModuleInterop() {
+  function readTsConfig() {
     const tsConfigInfo = tsConfigLoader({
-      cwd: context.parserOptions && context.parserOptions.tsconfigRootDir || process.cwd(),
+      cwd:
+        (context.parserOptions && context.parserOptions.tsconfigRootDir) ||
+        process.cwd(),
       getEnv: (key) => process.env[key],
     });
     try {
@@ -450,12 +453,26 @@ ExportMap.parse = function (path, content, context) {
           // this is because projects not using TypeScript won't have typescript installed
           ({ parseConfigFileTextToJson } = require('typescript'));
         }
-        const tsConfig = parseConfigFileTextToJson(tsConfigInfo.tsConfigPath, jsonText).config;
-        return tsConfig.compilerOptions.esModuleInterop;
+        return parseConfigFileTextToJson(tsConfigInfo.tsConfigPath, jsonText).config;
       }
     } catch (e) {
-      return false;
+      // Catch any errors
     }
+
+    return null;
+  }
+
+  function isEsModuleInterop() {
+    const cacheKey = hashObject({
+      tsconfigRootDir: context.parserOptions && context.parserOptions.tsconfigRootDir,
+    }).digest('hex');
+    let tsConfig = tsConfigCache.get(cacheKey);
+    if (typeof tsConfig === 'undefined') {
+      tsConfig = readTsConfig();
+      tsConfigCache.set(cacheKey, tsConfig);
+    }
+
+    return tsConfig && tsConfig.compilerOptions ? tsConfig.compilerOptions.esModuleInterop : false;
   }
 
   ast.body.forEach(function (n) {
@@ -478,7 +495,9 @@ ExportMap.parse = function (path, content, context) {
     if (n.type === 'ImportDeclaration') {
       // import type { Foo } (TS and Flow)
       const declarationIsType = n.importKind === 'type';
-      let isOnlyImportingTypes = declarationIsType;
+      // import './foo' or import {} from './foo' (both 0 specifiers) is a side effect and
+      // shouldn't be considered to be just importing types
+      let specifiersOnlyImportingTypes = n.specifiers.length;
       const importedSpecifiers = new Set();
       n.specifiers.forEach(specifier => {
         if (supportedImportTypes.has(specifier.type)) {
@@ -489,11 +508,10 @@ ExportMap.parse = function (path, content, context) {
         }
 
         // import { type Foo } (Flow)
-        if (!declarationIsType) {
-          isOnlyImportingTypes = specifier.importKind === 'type';
-        }
+        specifiersOnlyImportingTypes =
+          specifiersOnlyImportingTypes && specifier.importKind === 'type';
       });
-      captureDependency(n, isOnlyImportingTypes, importedSpecifiers);
+      captureDependency(n, declarationIsType || specifiersOnlyImportingTypes, importedSpecifiers);
 
       const ns = n.specifiers.find(s => s.type === 'ImportNamespaceSpecifier');
       if (ns) {

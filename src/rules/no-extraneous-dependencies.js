@@ -5,6 +5,7 @@ import minimatch from 'minimatch';
 import resolve from 'eslint-module-utils/resolve';
 import moduleVisitor from 'eslint-module-utils/moduleVisitor';
 import importType from '../core/importType';
+import { getFilePackageName } from '../core/packagePath';
 import docsUrl from '../docsUrl';
 
 const depFieldCache = new Map();
@@ -116,9 +117,54 @@ function optDepErrorMessage(packageName) {
     `not optionalDependencies.`;
 }
 
+function getModuleOriginalName(name) {
+  const [first, second] = name.split('/');
+  return first.startsWith('@') ? `${first}/${second}` : first;
+}
+
+function getModuleRealName(resolved) {
+  return getFilePackageName(resolved);
+}
+
+function checkDependencyDeclaration(deps, packageName, declarationStatus) {
+  const newDeclarationStatus = declarationStatus || {
+    isInDeps: false,
+    isInDevDeps: false,
+    isInOptDeps: false,
+    isInPeerDeps: false,
+    isInBundledDeps: false,
+  };
+
+  // in case of sub package.json inside a module
+  // check the dependencies on all hierarchy
+  const packageHierarchy = [];
+  const packageNameParts = packageName ? packageName.split('/') : [];
+  packageNameParts.forEach((namePart, index) => {
+    if (!namePart.startsWith('@')) {
+      const ancestor = packageNameParts.slice(0, index + 1).join('/');
+      packageHierarchy.push(ancestor);
+    }
+  });
+
+  return packageHierarchy.reduce((result, ancestorName) => {
+    return {
+      isInDeps: result.isInDeps || deps.dependencies[ancestorName] !== undefined,
+      isInDevDeps: result.isInDevDeps || deps.devDependencies[ancestorName] !== undefined,
+      isInOptDeps: result.isInOptDeps || deps.optionalDependencies[ancestorName] !== undefined,
+      isInPeerDeps: result.isInPeerDeps || deps.peerDependencies[ancestorName] !== undefined,
+      isInBundledDeps:
+        result.isInBundledDeps || deps.bundledDependencies.indexOf(ancestorName) !== -1,
+    };
+  }, newDeclarationStatus);
+}
+
 function reportIfMissing(context, deps, depsOptions, node, name) {
   // Do not report when importing types
-  if (node.importKind === 'type' || (node.parent && node.parent.importKind === 'type')) {
+  if (
+    node.importKind === 'type' ||
+    (node.parent && node.parent.importKind === 'type') ||
+    node.importKind === 'typeof'
+  ) {
     return;
   }
 
@@ -129,36 +175,47 @@ function reportIfMissing(context, deps, depsOptions, node, name) {
   const resolved = resolve(name, context);
   if (!resolved) { return; }
 
-  const splitName = name.split('/');
-  const packageName = splitName[0][0] === '@'
-    ? splitName.slice(0, 2).join('/')
-    : splitName[0];
-  const isInDeps = deps.dependencies[packageName] !== undefined;
-  const isInDevDeps = deps.devDependencies[packageName] !== undefined;
-  const isInOptDeps = deps.optionalDependencies[packageName] !== undefined;
-  const isInPeerDeps = deps.peerDependencies[packageName] !== undefined;
-  const isInBundledDeps = deps.bundledDependencies.indexOf(packageName) !== -1;
+  const importPackageName = getModuleOriginalName(name);
+  let declarationStatus = checkDependencyDeclaration(deps, importPackageName);
 
-  if (isInDeps ||
-    (depsOptions.allowDevDeps && isInDevDeps) ||
-    (depsOptions.allowPeerDeps && isInPeerDeps) ||
-    (depsOptions.allowOptDeps && isInOptDeps) ||
-    (depsOptions.allowBundledDeps && isInBundledDeps)
+  if (
+    declarationStatus.isInDeps ||
+    (depsOptions.allowDevDeps && declarationStatus.isInDevDeps) ||
+    (depsOptions.allowPeerDeps && declarationStatus.isInPeerDeps) ||
+    (depsOptions.allowOptDeps && declarationStatus.isInOptDeps) ||
+    (depsOptions.allowBundledDeps && declarationStatus.isInBundledDeps)
   ) {
     return;
   }
 
-  if (isInDevDeps && !depsOptions.allowDevDeps) {
-    context.report(node, devDepErrorMessage(packageName));
+  // test the real name from the resolved package.json
+  // if not aliased imports (alias/react for example), importPackageName can be misinterpreted
+  const realPackageName = getModuleRealName(resolved);
+  if (realPackageName && realPackageName !== importPackageName) {
+    declarationStatus = checkDependencyDeclaration(deps, realPackageName, declarationStatus);
+
+    if (
+      declarationStatus.isInDeps ||
+      (depsOptions.allowDevDeps && declarationStatus.isInDevDeps) ||
+      (depsOptions.allowPeerDeps && declarationStatus.isInPeerDeps) ||
+      (depsOptions.allowOptDeps && declarationStatus.isInOptDeps) ||
+      (depsOptions.allowBundledDeps && declarationStatus.isInBundledDeps)
+    ) {
+      return;
+    }
+  }
+
+  if (declarationStatus.isInDevDeps && !depsOptions.allowDevDeps) {
+    context.report(node, devDepErrorMessage(realPackageName || importPackageName));
     return;
   }
 
-  if (isInOptDeps && !depsOptions.allowOptDeps) {
-    context.report(node, optDepErrorMessage(packageName));
+  if (declarationStatus.isInOptDeps && !depsOptions.allowOptDeps) {
+    context.report(node, optDepErrorMessage(realPackageName || importPackageName));
     return;
   }
 
-  context.report(node, missingErrorMessage(packageName));
+  context.report(node, missingErrorMessage(realPackageName || importPackageName));
 }
 
 function testConfig(config, filename) {
@@ -207,8 +264,8 @@ module.exports = {
       allowBundledDeps: testConfig(options.bundledDependencies, filename) !== false,
     };
 
-    return moduleVisitor(node => {
-      reportIfMissing(context, deps, depsOptions, node, node.value);
+    return moduleVisitor((source, node) => {
+      reportIfMissing(context, deps, depsOptions, node, source.value);
     }, { commonjs: true });
   },
 };

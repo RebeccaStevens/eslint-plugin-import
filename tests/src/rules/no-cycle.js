@@ -45,7 +45,7 @@ ruleTester.run('no-cycle', rule, {
       options: [{ ignoreExternal: true }],
       settings: {
         'import/resolver': 'webpack',
-        'import/external-module-folders': ['external'],
+        'import/external-module-folders': ['cycles/external'],
       },
     }),
     test({
@@ -53,7 +53,7 @@ ruleTester.run('no-cycle', rule, {
       options: [{ ignoreExternal: true }],
       settings: {
         'import/resolver': 'webpack',
-        'import/external-module-folders': ['external'],
+        'import/external-module-folders': ['cycles/external'],
       },
     }),
     test({
@@ -73,6 +73,14 @@ ruleTester.run('no-cycle', rule, {
       code: 'import { bar } from "./flow-types"',
       parser: require.resolve('babel-eslint'),
     }),
+    test({
+      code: 'import { bar } from "./flow-types-only-importing-type"',
+      parser: require.resolve('babel-eslint'),
+    }),
+    test({
+      code: 'import { bar } from "./flow-types-only-importing-multiple-types"',
+      parser: require.resolve('babel-eslint'),
+    }),
   ],
   invalid: [
     test({
@@ -80,11 +88,16 @@ ruleTester.run('no-cycle', rule, {
       errors: [error(`Dependency cycle detected.`)],
     }),
     test({
+      code: 'import { bar } from "./flow-types-some-type-imports"',
+      parser: require.resolve('babel-eslint'),
+      errors: [error(`Dependency cycle detected.`)],
+    }),
+    test({
       code: 'import { foo } from "cycles/external/depth-one"',
       errors: [error(`Dependency cycle detected.`)],
       settings: {
         'import/resolver': 'webpack',
-        'import/external-module-folders': ['external'],
+        'import/external-module-folders': ['cycles/external'],
       },
     }),
     test({
@@ -92,7 +105,7 @@ ruleTester.run('no-cycle', rule, {
       errors: [error(`Dependency cycle via cycles/external/depth-one:1`)],
       settings: {
         'import/resolver': 'webpack',
-        'import/external-module-folders': ['external'],
+        'import/external-module-folders': ['cycles/external'],
       },
     }),
     test({

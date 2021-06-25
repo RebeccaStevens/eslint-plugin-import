@@ -339,6 +339,7 @@ ruleTester.run('extensions', rule, {
         import Component from './Component'
         import baz from 'foo/baz'
         import baw from '@scoped/baw/import'
+        import chart from '@/configs/chart'
         import express from 'express'
       `,
       options: [ 'always', { ignorePackages: true } ],
@@ -358,6 +359,7 @@ ruleTester.run('extensions', rule, {
         import Component from './Component'
         import baz from 'foo/baz'
         import baw from '@scoped/baw/import'
+        import chart from '@/configs/chart'
         import express from 'express'
       `,
       options: [ 'ignorePackages' ],
@@ -389,6 +391,22 @@ ruleTester.run('extensions', rule, {
         },
       ],
       options: [ 'never', { ignorePackages: true } ],
+    }),
+
+    test({
+      code: `
+        import foo from './foo.js'
+        import bar from './bar.json'
+        import Component from './Component.jsx'
+      `,
+      errors: [
+        {
+          message: 'Unexpected use of file extension "jsx" for "./Component.jsx"',
+          line: 4,
+          column: 31,
+        },
+      ],
+      options: [ 'always', { pattern: { jsx: 'never' } } ],
     }),
 
     // export (#964)
@@ -444,13 +462,126 @@ ruleTester.run('extensions', rule, {
         },
       ],
     }),
+    // require (#1230)
     test({
-      code: 'import foo from "@/ImNotAScopedModule"',
+      code: [
+        'const { foo } = require("./foo")',
+        'export { foo }',
+      ].join('\n'),
+      options: [ 'always' ],
+      errors: [
+        {
+          message: 'Missing file extension for "./foo"',
+          line: 1,
+          column: 25,
+        },
+      ],
+    }),
+    test({
+      code: [
+        'const { foo } = require("./foo.js")',
+        'export { foo }',
+      ].join('\n'),
+      options: [ 'never' ],
+      errors: [
+        {
+          message: 'Unexpected use of file extension "js" for "./foo.js"',
+          line: 1,
+          column: 25,
+        },
+      ],
+    }),
+
+    // export { } from
+    test({
+      code: 'export { foo } from "./foo"',
+      options: [ 'always' ],
+      errors: [
+        {
+          message: 'Missing file extension for "./foo"',
+          line: 1,
+          column: 21,
+        },
+      ],
+    }),
+    test({
+      code: `
+        import foo from "@/ImNotAScopedModule";
+        import chart from '@/configs/chart';
+      `,
       options: ['always'],
       errors: [
         {
           message: 'Missing file extension for "@/ImNotAScopedModule"',
+          line: 2,
+        },
+        {
+          message: 'Missing file extension for "@/configs/chart"',
+          line: 3,
+        },
+      ],
+    }),
+    test({
+      code: 'export { foo } from "./foo.js"',
+      options: [ 'never' ],
+      errors: [
+        {
+          message: 'Unexpected use of file extension "js" for "./foo.js"',
           line: 1,
+          column: 21,
+        },
+      ],
+    }),
+
+    // export * from
+    test({
+      code: 'export * from "./foo"',
+      options: [ 'always' ],
+      errors: [
+        {
+          message: 'Missing file extension for "./foo"',
+          line: 1,
+          column: 15,
+        },
+      ],
+    }),
+    test({
+      code: 'export * from "./foo.js"',
+      options: [ 'never' ],
+      errors: [
+        {
+          message: 'Unexpected use of file extension "js" for "./foo.js"',
+          line: 1,
+          column: 15,
+        },
+      ],
+    }),
+    test({
+      code: 'import foo from "@/ImNotAScopedModule.js"',
+      options: ['never'],
+      errors: [
+        {
+          message: 'Unexpected use of file extension "js" for "@/ImNotAScopedModule.js"',
+          line: 1,
+        },
+      ],
+    }),
+    test({
+      code: `
+        import _ from 'lodash';
+        import m from '@test-scope/some-module/index.js';
+
+        import bar from './bar';
+      `,
+      options: ['never'],
+      settings: {
+        'import/resolver': 'webpack',
+        'import/external-module-folders': ['node_modules', 'symlinked-module'],
+      },
+      errors: [
+        {
+          message: 'Unexpected use of file extension "js" for "@test-scope/some-module/index.js"',
+          line: 3,
         },
       ],
     }),
